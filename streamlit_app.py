@@ -2,6 +2,7 @@
 
 import streamlit as st
 import sqlite3, hashlib
+import streamlit.components.v1 as components
 
 DB_PATH = "users.db"
 
@@ -126,18 +127,32 @@ def register_page():
 
 # ── 챗봇 화면 ─────────────────────────────────────────────────
 def chat_page():
-    st.title(f"🗨 상담 챗봇 (안녕하세요, {st.session_state.nickname}님!)")
-    if st.button("🔙 로그아웃"):
-        for k in ("logged_in","username","nickname"):
-            st.session_state[k] = False if k=="logged_in" else ""
-        st.session_state.page = "login"
-        st.rerun()
+    # st.title(f"🗨 상담 챗봇 (안녕하세요, {st.session_state.nickname}님!)")
+    # if st.button("🔙 로그아웃"):
+    #     for k in ("logged_in","username","nickname"):
+    #         st.session_state[k] = False if k=="logged_in" else ""
+    #     st.session_state.page = "login"
+    #     st.rerun()
 
-    msg = st.text_input("메시지를 입력하세요:", key="chat_msg")
-    if st.button("전송", key="chat_send") and msg:
-        with st.spinner("응답 생성 중..."):
-            resp = get_bot_response(msg)
-        st.text_area("챗봇 응답:", value=resp, height=200)
+    # msg = st.text_input("메시지를 입력하세요:", key="chat_msg")
+    # if st.button("전송", key="chat_send") and msg:
+    #     with st.spinner("응답 생성 중..."):
+    #         resp = get_bot_response(msg)
+    #     st.text_area("챗봇 응답:", value=resp, height=200)
+    st.title("내 Streamlit 앱에 Dify.ai 챗봇 임베드하기")
+
+    # iframe 코드 전체를 문자열로 넣고, 높이(height)만 지정해 줍니다.
+    iframe_code = """
+    <iframe
+        src="https://udify.app/chatbot/HuH7Wl5AO5GuwQlY"
+        style="width: 100%; height: 100%; min-height: 700px;"
+        frameborder="0"
+        allow="microphone">
+    </iframe>
+    """
+
+# components.html로 렌더링
+components.html(iframe_code, height=700)
 
 # ── 화면 전환 ──────────────────────────────────────────────────
 if not st.session_state.logged_in:
