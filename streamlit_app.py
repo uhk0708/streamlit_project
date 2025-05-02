@@ -151,8 +151,8 @@ def chat_page():
     </iframe>
     """
 
-# components.html로 렌더링
-components.html(iframe_code, height=700)
+    # components.html로 렌더링
+    components.html(iframe_code, height=700)
 
 # ── 화면 전환 ──────────────────────────────────────────────────
 if not st.session_state.logged_in:
