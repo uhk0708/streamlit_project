@@ -1,4 +1,2 @@
 streamlit
 streamlit-drawable-canvas
-sqlite3
-hashlib
