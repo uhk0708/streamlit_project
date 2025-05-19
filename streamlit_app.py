@@ -7,8 +7,9 @@ import pandas as pd
 from datetime import date
 
 DB_PATH = "users.db"
+SALES_DB_PATH = "sales.db"
 
-# ── DB 초기화 ───────────────────────────────────────────────────
+# ── 사용자 DB 초기화 ─────────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -22,6 +23,22 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN nickname TEXT")
     except sqlite3.OperationalError:
         pass
+    conn.commit()
+    conn.close()
+
+# ── 매출 DB 초기화 ─────────────────────────────────────────────
+def init_sales_db():
+    conn = sqlite3.connect(SALES_DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sales (
+            날짜 TEXT,
+            사이트 TEXT,
+            상품 TEXT,
+            수량 INTEGER,
+            광고비 INTEGER
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -54,6 +71,8 @@ def create_user(username: str, password: str, nickname: str) -> bool:
 
 # ── 앱 초기화 & 세션 초기값 ──────────────────────────────────────
 init_db()
+init_sales_db()
+
 for key, val in {
     "page": "login",
     "logged_in": False,
@@ -64,13 +83,10 @@ for key, val in {
     if key not in st.session_state:
         st.session_state[key] = val
 
-# 전역 상태 DB 초기화
 if "product_prices" not in st.session_state:
     st.session_state.product_prices = {}
 if "site_fees" not in st.session_state:
     st.session_state.site_fees = {}
-if "sales_data" not in st.session_state:
-    st.session_state.sales_data = []
 
 # ── 로그인 페이지 ───────────────────────────────────────────────
 def login_page():
@@ -153,21 +169,21 @@ def chat_page():
         ad_cost = st.number_input("해당 날짜의 광고비", min_value=0, step=100)
 
         if st.button("판매 데이터 저장"):
-            st.session_state.sales_data.append({
-                "날짜": today,
-                "사이트": selected_site,
-                "상품": selected_product,
-                "수량": quantity,
-                "광고비": ad_cost
-            })
+            conn = sqlite3.connect(SALES_DB_PATH)
+            conn.execute("INSERT INTO sales (날짜, 사이트, 상품, 수량, 광고비) VALUES (?, ?, ?, ?, ?)",
+                         (today, selected_site, selected_product, quantity, ad_cost))
+            conn.commit(); conn.close()
             st.success("판매 데이터가 저장되었습니다.")
 
     st.divider()
     st.subheader("3️⃣ 매출 및 순이익 분석")
 
-    if st.session_state.sales_data:
-        df = pd.DataFrame(st.session_state.sales_data)
-        df["단가"] = df.apply(lambda row: st.session_state.product_prices[row["사이트"]][row["상품"]], axis=1)
+    conn = sqlite3.connect(SALES_DB_PATH)
+    df = pd.read_sql_query("SELECT * FROM sales", conn)
+    conn.close()
+
+    if not df.empty:
+        df["단가"] = df.apply(lambda row: st.session_state.product_prices.get(row["사이트"], {}).get(row["상품"], 0), axis=1)
         df["수수료율"] = df["사이트"].apply(lambda s: st.session_state.site_fees.get(s, 0))
         df["매출"] = df["단가"] * df["수량"]
         df["수수료"] = df["매출"] * df["수수료율"] / 100
