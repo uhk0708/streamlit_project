@@ -3,6 +3,8 @@
 import streamlit as st
 import sqlite3, hashlib
 import streamlit.components.v1 as components
+import pandas as pd
+from datetime import date
 
 DB_PATH = "users.db"
 
@@ -10,14 +12,12 @@ DB_PATH = "users.db"
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # users 테이블 (이미 있으면 건너뜀)
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username      TEXT PRIMARY KEY,
             password_hash TEXT NOT NULL
         )
     """)
-    # 닉네임 컬럼이 없으면 추가
     try:
         c.execute("ALTER TABLE users ADD COLUMN nickname TEXT")
     except sqlite3.OperationalError:
@@ -52,14 +52,10 @@ def create_user(username: str, password: str, nickname: str) -> bool:
     conn.commit(); conn.close()
     return True
 
-# ── 더미 챗봇 응답 (개발 중) ────────────────────────────────────
-def get_bot_response(msg: str) -> str:
-    return f"에코: {msg} (챗봇 로직은 곧 연결됩니다)"
-
 # ── 앱 초기화 & 세션 초기값 ──────────────────────────────────────
 init_db()
 for key, val in {
-    "page": "login",          # login / register / chat
+    "page": "login",
     "logged_in": False,
     "signup_success": False,
     "username": "",
@@ -68,9 +64,16 @@ for key, val in {
     if key not in st.session_state:
         st.session_state[key] = val
 
+# 전역 상태 DB 초기화
+if "product_prices" not in st.session_state:
+    st.session_state.product_prices = {}
+if "site_fees" not in st.session_state:
+    st.session_state.site_fees = {}
+if "sales_data" not in st.session_state:
+    st.session_state.sales_data = []
+
 # ── 로그인 페이지 ───────────────────────────────────────────────
 def login_page():
-    # 가운데 정렬
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         st.title("🗝 로그인")
@@ -81,7 +84,6 @@ def login_page():
         user = st.text_input("아이디", key="login_user")
         pw   = st.text_input("비밀번호", type="password", key="login_pw")
 
-        # 로그인 시도
         if st.button("로그인"):
             if get_pw_hash(user) == hash_pw(pw):
                 st.session_state.logged_in = True
@@ -92,7 +94,6 @@ def login_page():
             else:
                 st.error("아이디 또는 비밀번호가 잘못되었습니다.")
 
-        # 회원가입 페이지로 이동
         if st.button("회원가입"):
             st.session_state.page = "register"
             st.rerun()
@@ -102,14 +103,13 @@ def register_page():
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
         st.title("📝 회원가입")
-        # 로그인 화면으로 돌아가기 버튼
         if st.button("← 로그인으로 돌아가기"):
             st.session_state.page = "login"
-            # 필요한 경우 입력 필드 초기화
             st.session_state.reg_user = ""
             st.session_state.reg_pw   = ""
             st.session_state.reg_nick = ""
             st.rerun()
+
         new_user = st.text_input("사용하실 아이디", key="reg_user")
         new_pw   = st.text_input("비밀번호", type="password", key="reg_pw")
         new_nick = st.text_input("닉네임", key="reg_nick")
@@ -118,41 +118,71 @@ def register_page():
             if not (new_user and new_pw and new_nick):
                 st.error("모든 항목을 입력해주세요.")
             elif create_user(new_user, new_pw, new_nick):
-                # 성공 시 로그인 화면으로, 성공 메시지 표시
                 st.session_state.signup_success = True
                 st.session_state.page = "login"
                 st.rerun()
             else:
                 st.error("이미 존재하는 아이디입니다.")
 
-# ── 챗봇 화면 ─────────────────────────────────────────────────
+# ── 챗봇 대신 매출 자동화 시스템 ───────────────────────────────
 def chat_page():
-    # st.title(f"🗨 상담 챗봇 (안녕하세요, {st.session_state.nickname}님!)")
-    # if st.button("🔙 로그아웃"):
-    #     for k in ("logged_in","username","nickname"):
-    #         st.session_state[k] = False if k=="logged_in" else ""
-    #     st.session_state.page = "login"
-    #     st.rerun()
+    st.title(f"📈 매출 자동화 시스템 - {st.session_state.nickname}님")
 
-    # msg = st.text_input("메시지를 입력하세요:", key="chat_msg")
-    # if st.button("전송", key="chat_send") and msg:
-    #     with st.spinner("응답 생성 중..."):
-    #         resp = get_bot_response(msg)
-    #     st.text_area("챗봇 응답:", value=resp, height=200)
-    st.title("내 Streamlit 앱에 Dify.ai 챗봇 임베드하기")
+    st.subheader("1️⃣ 상품 가격 및 수수료 설정 (관리자용)")
+    site = st.text_input("사이트명 (예: 쿠팡, SSG 등)")
+    product = st.text_input("상품명")
+    price = st.number_input("상품 가격", min_value=0, step=10)
+    fee = st.number_input("판매 수수료율 (%)", min_value=0.0, step=0.1, format="%.1f")
 
-    # iframe 코드 전체를 문자열로 넣고, 높이(height)만 지정해 줍니다.
-    iframe_code = """
-    <iframe
-        src="https://udify.app/chatbot/HuH7Wl5AO5GuwQlY"
-        style="width: 100%; height: 100%; min-height: 700px;"
-        frameborder="0"
-        allow="microphone">
-    </iframe>
-    """
+    if st.button("상품 가격 및 수수료 저장"):
+        if site and product:
+            if site not in st.session_state.product_prices:
+                st.session_state.product_prices[site] = {}
+            st.session_state.product_prices[site][product] = price
+            st.session_state.site_fees[site] = fee
+            st.success(f"{site}의 {product} 가격/수수료가 저장되었습니다.")
 
-    # components.html로 렌더링
-    components.html(iframe_code, height=700)
+    st.divider()
+    st.subheader("2️⃣ 판매 내역 및 광고비 입력")
+
+    today = date.today().isoformat()
+    if st.session_state.product_prices:
+        selected_site = st.selectbox("사이트 선택", list(st.session_state.product_prices.keys()))
+        selected_product = st.selectbox("상품 선택", list(st.session_state.product_prices[selected_site].keys()))
+        quantity = st.number_input("판매 수량", min_value=0, step=1)
+        ad_cost = st.number_input("해당 날짜의 광고비", min_value=0, step=100)
+
+        if st.button("판매 데이터 저장"):
+            st.session_state.sales_data.append({
+                "날짜": today,
+                "사이트": selected_site,
+                "상품": selected_product,
+                "수량": quantity,
+                "광고비": ad_cost
+            })
+            st.success("판매 데이터가 저장되었습니다.")
+
+    st.divider()
+    st.subheader("3️⃣ 매출 및 순이익 분석")
+
+    if st.session_state.sales_data:
+        df = pd.DataFrame(st.session_state.sales_data)
+        df["단가"] = df.apply(lambda row: st.session_state.product_prices[row["사이트"]][row["상품"]], axis=1)
+        df["수수료율"] = df["사이트"].apply(lambda s: st.session_state.site_fees.get(s, 0))
+        df["매출"] = df["단가"] * df["수량"]
+        df["수수료"] = df["매출"] * df["수수료율"] / 100
+        df["순이익"] = df["매출"] - df["수수료"] - df["광고비"]
+
+        daily_summary = df.groupby("날짜").agg({
+            "매출": "sum",
+            "광고비": "sum",
+            "순이익": "sum"
+        }).reset_index()
+
+        st.dataframe(daily_summary)
+        st.line_chart(daily_summary.set_index("날짜")[["매출", "광고비", "순이익"]])
+    else:
+        st.info("아직 판매 데이터가 없습니다.")
 
 # ── 화면 전환 ──────────────────────────────────────────────────
 if not st.session_state.logged_in:
