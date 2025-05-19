@@ -156,6 +156,24 @@ def admin_page():
                 st.session_state.product_prices[site][product] = price
                 st.success("상품 가격이 저장되었습니다.")
 
+        st.divider()
+        st.subheader("상품 목록 관리")
+        for s in st.session_state.product_prices:
+            for p in st.session_state.product_prices[s]:
+                col1, col2, col3 = st.columns([4, 2, 2])
+                with col1:
+                    st.markdown(f"**{s} / {p}** - {st.session_state.product_prices[s][p]}원")
+                with col2:
+                    new_price = st.number_input(f"가격 수정 ({s}-{p})", value=st.session_state.product_prices[s][p], key=f"{s}_{p}_price")
+                    if st.button("수정", key=f"{s}_{p}_update"):
+                        st.session_state.product_prices[s][p] = new_price
+                        st.success(f"{p} 가격이 수정되었습니다.")
+                with col3:
+                    if st.button("삭제", key=f"{s}_{p}_delete"):
+                        del st.session_state.product_prices[s][p]
+                        st.success(f"{p} 삭제됨")
+                        st.rerun()
+
     with tab2:
         st.subheader("사이트별 수수료율 설정")
         fee_site = st.text_input("수수료 설정할 사이트")
@@ -165,6 +183,30 @@ def admin_page():
             conn.execute("REPLACE INTO fees (사이트, 수수료율) VALUES (?, ?)", (fee_site, fee_value))
             conn.commit(); conn.close()
             st.success("수수료율이 저장되었습니다.")
+
+        st.divider()
+        st.subheader("수수료 목록 및 관리")
+        conn = sqlite3.connect(SALES_DB_PATH)
+        fee_df = pd.read_sql_query("SELECT * FROM fees", conn)
+        conn.close()
+        for idx, row in fee_df.iterrows():
+            col1, col2, col3 = st.columns([4, 2, 2])
+            with col1:
+                st.markdown(f"**{row['사이트']}** - {row['수수료율']}%")
+            with col2:
+                updated_fee = st.number_input(f"수정할 수수료율 ({row['사이트']})", value=row['수수료율'], key=f"fee_{row['사이트']}")
+                if st.button("수정", key=f"fee_update_{row['사이트']}"):
+                    conn = sqlite3.connect(SALES_DB_PATH)
+                    conn.execute("UPDATE fees SET 수수료율 = ? WHERE 사이트 = ?", (updated_fee, row['사이트']))
+                    conn.commit(); conn.close()
+                    st.success("수정 완료"); st.rerun()
+            with col3:
+                if st.button("삭제", key=f"fee_delete_{row['사이트']}"):
+                    conn = sqlite3.connect(SALES_DB_PATH)
+                    conn.execute("DELETE FROM fees WHERE 사이트 = ?", (row['사이트'],))
+                    conn.commit(); conn.close()
+                    st.success("삭제 완료"); st.rerun()
+
 
 # ── 매출 입력 및 분석 페이지 ─────────────────────────────────────
 def main_page():
