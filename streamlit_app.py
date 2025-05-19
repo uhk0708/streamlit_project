@@ -287,6 +287,8 @@ def admin_page():
     
 
 
+# streamlit_app.py (중략 생략 부분은 유지)
+
 # ── 매출 입력 및 분석 페이지 ─────────────────────────────────────
 def main_page():
     st.title(f"📈 매출 자동화 시스템 - {st.session_state.nickname}님")
@@ -351,27 +353,23 @@ def main_page():
     if not df.empty:
         df = df.merge(prod_df, on=["사이트", "상품"], how="left")
         df = df.merge(fee_df, on="사이트", how="left")
-        df = df.merge(ad_df, on=["날짜", "사이트"], how="left")
-
         df["수수료율"] = df["수수료율"].fillna(0)
-        df["광고비"] = df["광고비"].fillna(0)
+
+        # 광고비 병합 시 KeyError 방지
+        df = df.merge(ad_df, on=["날짜", "사이트"], how="left")
+        if "광고비" not in df.columns:
+            df["광고비"] = 0
+        else:
+            df["광고비"] = df["광고비"].fillna(0)
+
         df["매출"] = df["가격"] * df["수량"]
         df["수수료"] = df["매출"] * df["수수료율"] / 100
 
-        # 광고비가 동일 날짜-사이트에 중복 계산되지 않도록 제거
-        df_grouped = df.drop_duplicates(subset=["날짜", "사이트"])[["날짜", "사이트", "광고비"]]
-        ad_summary = df_grouped.groupby("날짜")["광고비"].sum().reset_index()
-
-        df["광고비"] = 0  # 다시 초기화 후 날짜별 광고비 수동 할당
-        for idx, row in ad_summary.iterrows():
-            df.loc[df["날짜"] == row["날짜"], "광고비"] = row["광고비"]
-
         df_grouped = df.groupby("날짜").agg({
             "매출": "sum",
-            "광고비": "max",
+            "광고비": "sum",
             "수수료": "sum"
         }).reset_index()
-
         df_grouped["순이익"] = df_grouped["매출"] - df_grouped["수수료"] - df_grouped["광고비"]
 
         st.dataframe(df_grouped)
