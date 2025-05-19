@@ -169,28 +169,37 @@ def admin_page():
         conn = sqlite3.connect(SALES_DB_PATH)
         product_df = pd.read_sql_query("SELECT * FROM products", conn)
         conn.close()
+
         for idx, row in product_df.iterrows():
-            col1, col2, col3 = st.columns([4, 2, 2])
-            with col1:
-                st.markdown(f"**{row['사이트']} / {row['상품']}** - {row['가격']}원")
-            with col2:
-                new_price = st.number_input(f"가격 수정 ({row['사이트']}-{row['상품']})", value=row['가격'], key=f"edit_{row['사이트']}_{row['상품']}")
-                if st.button("수정", key=f"update_{row['사이트']}_{row['상품']}"):
-                    conn = sqlite3.connect(SALES_DB_PATH)
-                    conn.execute("UPDATE products SET 가격=? WHERE 사이트=? AND 상품=?", (new_price, row['사이트'], row['상품']))
-                    conn.commit(); conn.close()
-                    st.success("수정 완료"); st.rerun()
-            with col3:
-                if st.button("삭제", key=f"delete_{row['사이트']}_{row['상품']}"):
-                    conn = sqlite3.connect(SALES_DB_PATH)
-                    conn.execute("DELETE FROM products WHERE 사이트=? AND 상품=?", (row['사이트'], row['상품']))
-                    conn.commit(); conn.close()
-                    st.success("삭제 완료"); st.rerun()
+            with st.container():
+                cols = st.columns([5, 3, 1, 1])
+                with cols[0]:
+                    st.markdown(f"**{row['사이트']} / {row['상품']}** - {row['가격']}원")
+                with cols[1]:
+                    new_price = st.number_input(
+                        label=f"",
+                        value=row['가격'],
+                        key=f"edit_{row['사이트']}_{row['상품']}",
+                        label_visibility="collapsed",
+                        step=100
+                    )
+                with cols[2]:
+                    if st.button("수정", key=f"update_{row['사이트']}_{row['상품']}"):
+                        conn = sqlite3.connect(SALES_DB_PATH)
+                        conn.execute("UPDATE products SET 가격=? WHERE 사이트=? AND 상품=?", (new_price, row['사이트'], row['상품']))
+                        conn.commit(); conn.close()
+                        st.success("수정 완료"); st.rerun()
+                with cols[3]:
+                    if st.button("삭제", key=f"delete_{row['사이트']}_{row['상품']}"):
+                        conn = sqlite3.connect(SALES_DB_PATH)
+                        conn.execute("DELETE FROM products WHERE 사이트=? AND 상품=?", (row['사이트'], row['상품']))
+                        conn.commit(); conn.close()
+                        st.success("삭제 완료"); st.rerun()
 
     with tab2:
         st.subheader("사이트별 수수료율 설정")
         fee_site = st.text_input("수수료 설정할 사이트")
-        fee_value = st.number_input("수수료율 (%)", min_value=0.0, step=0.1, format="%.1f")
+        fee_value = st.number_input("수수료율 (%)", min_value=0.0, step=0.00001, format="%.5f")
         if st.button("수수료율 저장"):
             conn = sqlite3.connect(SALES_DB_PATH)
             conn.execute("REPLACE INTO fees (사이트, 수수료율) VALUES (?, ?)", (fee_site, fee_value))
