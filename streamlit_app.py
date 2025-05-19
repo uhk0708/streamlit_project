@@ -16,13 +16,10 @@ def init_db():
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username      TEXT PRIMARY KEY,
-            password_hash TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            nickname TEXT
         )
     """)
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN nickname TEXT")
-    except sqlite3.OperationalError:
-        pass
     conn.commit()
     conn.close()
 
@@ -37,6 +34,12 @@ def init_sales_db():
             상품 TEXT,
             수량 INTEGER,
             광고비 INTEGER
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS fees (
+            사이트 TEXT PRIMARY KEY,
+            수수료율 REAL
         )
     """)
     conn.commit()
@@ -85,8 +88,6 @@ for key, val in {
 
 if "product_prices" not in st.session_state:
     st.session_state.product_prices = {}
-if "site_fees" not in st.session_state:
-    st.session_state.site_fees = {}
 
 # ── 로그인 페이지 ───────────────────────────────────────────────
 def login_page():
@@ -105,7 +106,7 @@ def login_page():
                 st.session_state.logged_in = True
                 st.session_state.username  = user
                 st.session_state.nickname  = get_nickname(user) or user
-                st.session_state.page = "chat"
+                st.session_state.page = "main"
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 잘못되었습니다.")
@@ -121,9 +122,6 @@ def register_page():
         st.title("📝 회원가입")
         if st.button("← 로그인으로 돌아가기"):
             st.session_state.page = "login"
-            st.session_state.reg_user = ""
-            st.session_state.reg_pw   = ""
-            st.session_state.reg_nick = ""
             st.rerun()
 
         new_user = st.text_input("사용하실 아이디", key="reg_user")
@@ -140,29 +138,42 @@ def register_page():
             else:
                 st.error("이미 존재하는 아이디입니다.")
 
-# ── 챗봇 대신 매출 자동화 시스템 ───────────────────────────────
-def chat_page():
+# ── 관리자 페이지 ───────────────────────────────────────────────
+def admin_page():
+    st.title("🔧 관리자 페이지")
+
+    tab1, tab2 = st.tabs(["상품 가격 설정", "사이트 수수료 설정"])
+
+    with tab1:
+        st.subheader("상품 가격 설정")
+        site = st.text_input("사이트명")
+        product = st.text_input("상품명")
+        price = st.number_input("상품 가격", min_value=0, step=10)
+        if st.button("상품 가격 저장"):
+            if site and product:
+                if site not in st.session_state.product_prices:
+                    st.session_state.product_prices[site] = {}
+                st.session_state.product_prices[site][product] = price
+                st.success("상품 가격이 저장되었습니다.")
+
+    with tab2:
+        st.subheader("사이트별 수수료율 설정")
+        fee_site = st.text_input("수수료 설정할 사이트")
+        fee_value = st.number_input("수수료율 (%)", min_value=0.0, step=0.1, format="%.1f")
+        if st.button("수수료율 저장"):
+            conn = sqlite3.connect(SALES_DB_PATH)
+            conn.execute("REPLACE INTO fees (사이트, 수수료율) VALUES (?, ?)", (fee_site, fee_value))
+            conn.commit(); conn.close()
+            st.success("수수료율이 저장되었습니다.")
+
+# ── 매출 입력 및 분석 페이지 ─────────────────────────────────────
+def main_page():
     st.title(f"📈 매출 자동화 시스템 - {st.session_state.nickname}님")
 
-    st.subheader("1️⃣ 상품 가격 및 수수료 설정 (관리자용)")
-    site = st.text_input("사이트명 (예: 쿠팡, SSG 등)")
-    product = st.text_input("상품명")
-    price = st.number_input("상품 가격", min_value=0, step=10)
-    fee = st.number_input("판매 수수료율 (%)", min_value=0.0, step=0.1, format="%.1f")
-
-    if st.button("상품 가격 및 수수료 저장"):
-        if site and product:
-            if site not in st.session_state.product_prices:
-                st.session_state.product_prices[site] = {}
-            st.session_state.product_prices[site][product] = price
-            st.session_state.site_fees[site] = fee
-            st.success(f"{site}의 {product} 가격/수수료가 저장되었습니다.")
-
-    st.divider()
-    st.subheader("2️⃣ 판매 내역 및 광고비 입력")
-
     today = date.today().isoformat()
+
     if st.session_state.product_prices:
+        st.subheader("판매 내역 입력")
         selected_site = st.selectbox("사이트 선택", list(st.session_state.product_prices.keys()))
         selected_product = st.selectbox("상품 선택", list(st.session_state.product_prices[selected_site].keys()))
         quantity = st.number_input("판매 수량", min_value=0, step=1)
@@ -175,16 +186,16 @@ def chat_page():
             conn.commit(); conn.close()
             st.success("판매 데이터가 저장되었습니다.")
 
-    st.divider()
-    st.subheader("3️⃣ 매출 및 순이익 분석")
-
+    st.subheader("매출 및 순이익 분석")
     conn = sqlite3.connect(SALES_DB_PATH)
     df = pd.read_sql_query("SELECT * FROM sales", conn)
+    fee_df = pd.read_sql_query("SELECT * FROM fees", conn)
     conn.close()
 
     if not df.empty:
         df["단가"] = df.apply(lambda row: st.session_state.product_prices.get(row["사이트"], {}).get(row["상품"], 0), axis=1)
-        df["수수료율"] = df["사이트"].apply(lambda s: st.session_state.site_fees.get(s, 0))
+        df = pd.merge(df, fee_df, on="사이트", how="left")
+        df["수수료율"] = df["수수료율"].fillna(0)
         df["매출"] = df["단가"] * df["수량"]
         df["수수료"] = df["매출"] * df["수수료율"] / 100
         df["순이익"] = df["매출"] - df["수수료"] - df["광고비"]
@@ -207,4 +218,8 @@ if not st.session_state.logged_in:
     else:
         register_page()
 else:
-    chat_page()
+    menu = st.sidebar.selectbox("메뉴 선택", ["매출 페이지", "관리자 설정"])
+    if menu == "관리자 설정":
+        admin_page()
+    else:
+        main_page()
