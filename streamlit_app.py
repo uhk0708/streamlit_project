@@ -255,6 +255,36 @@ def main_page():
             conn.commit(); conn.close()
             st.success("판매 데이터가 저장되었습니다.")
 
+    st.subheader("판매 데이터 목록 및 수정")
+    conn = sqlite3.connect(SALES_DB_PATH)
+    sales_df = pd.read_sql_query("SELECT rowid, * FROM sales ORDER BY 날짜 DESC", conn)
+    conn.close()
+
+    if not sales_df.empty:
+        site_filter = st.selectbox("사이트 필터", ["전체"] + sorted(sales_df["사이트"].unique().tolist()))
+        filtered_df = sales_df if site_filter == "전체" else sales_df[sales_df["사이트"] == site_filter]
+
+        for idx, row in filtered_df.iterrows():
+            with st.container():
+                cols = st.columns([3, 3, 2, 2, 1])
+                with cols[0]:
+                    st.markdown(f"📅 **{row['날짜']}** | 🛒 **{row['사이트']} / {row['상품']}**")
+                with cols[1]:
+                    qty = st.number_input("수량", value=row['수량'], key=f"qty_{row['rowid']}", step=1)
+                    ad = st.number_input("광고비", value=row['광고비'], key=f"ad_{row['rowid']}", step=100)
+                with cols[2]:
+                    if st.button("수정", key=f"edit_{row['rowid']}"):
+                        conn = sqlite3.connect(SALES_DB_PATH)
+                        conn.execute("UPDATE sales SET 수량=?, 광고비=? WHERE rowid=?", (qty, ad, row['rowid']))
+                        conn.commit(); conn.close()
+                        st.success("수정 완료"); st.rerun()
+                with cols[3]:
+                    if st.button("삭제", key=f"del_{row['rowid']}"):
+                        conn = sqlite3.connect(SALES_DB_PATH)
+                        conn.execute("DELETE FROM sales WHERE rowid=?", (row['rowid'],))
+                        conn.commit(); conn.close()
+                        st.success("삭제 완료"); st.rerun()
+
     st.subheader("매출 및 순이익 분석")
     conn = sqlite3.connect(SALES_DB_PATH)
     df = pd.read_sql_query("SELECT * FROM sales", conn)
