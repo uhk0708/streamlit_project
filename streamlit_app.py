@@ -246,12 +246,24 @@ def main_page():
         filtered_products = product_df[product_df["사이트"] == selected_site]
         selected_product = st.selectbox("상품 선택", filtered_products["상품"].tolist())
         quantity = st.number_input("판매 수량", min_value=0, step=1)
-        ad_cost = st.number_input("해당 날짜의 광고비", min_value=0, step=100)
+
+        # 광고비 DB 저장 및 반영
+        st.markdown("**📢 광고비는 사이트별로 1번만 입력하세요**")
+        conn = sqlite3.connect(SALES_DB_PATH)
+        existing_ad = conn.execute("SELECT 광고비 FROM sales WHERE 날짜=? AND 사이트=? LIMIT 1", (today, selected_site)).fetchone()
+        conn.close()
+
+        ad_cost = existing_ad[0] if existing_ad else 0
+        new_ad_cost = st.number_input("해당 날짜의 광고비 (사이트별 1회 입력)", min_value=0, step=100, value=ad_cost)
 
         if st.button("판매 데이터 저장"):
             conn = sqlite3.connect(SALES_DB_PATH)
-            conn.execute("INSERT INTO sales (날짜, 사이트, 상품, 수량, 광고비) VALUES (?, ?, ?, ?, ?)",
-                         (today, selected_site, selected_product, quantity, ad_cost))
+            if not existing_ad:
+                conn.execute("INSERT INTO sales (날짜, 사이트, 상품, 수량, 광고비) VALUES (?, ?, ?, ?, ?)",
+                             (today, selected_site, selected_product, quantity, new_ad_cost))
+            else:
+                conn.execute("INSERT INTO sales (날짜, 사이트, 상품, 수량, 광고비) VALUES (?, ?, ?, ?, 0)",
+                             (today, selected_site, selected_product, quantity))
             conn.commit(); conn.close()
             st.success("판매 데이터가 저장되었습니다.")
 
@@ -271,7 +283,10 @@ def main_page():
                     st.markdown(f"📅 **{row['날짜']}** | 🛒 **{row['사이트']} / {row['상품']}**")
                 with cols[1]:
                     qty = st.number_input("수량", value=row['수량'], key=f"qty_{row['rowid']}", step=1)
-                    ad = st.number_input("광고비", value=row['광고비'], key=f"ad_{row['rowid']}", step=100)
+                    if row['광고비'] > 0:
+                        ad = st.number_input("광고비", value=row['광고비'], key=f"ad_{row['rowid']}", step=100)
+                    else:
+                        ad = 0
                 with cols[2]:
                     if st.button("수정", key=f"edit_{row['rowid']}"):
                         conn = sqlite3.connect(SALES_DB_PATH)
@@ -297,10 +312,18 @@ def main_page():
         df = df.merge(fee_df, on="사이트", how="left")
         df["수수료율"] = df["수수료율"].fillna(0)
         df["매출"] = df["가격"] * df["수량"]
-        df["수수료"] = df["매출"] * df["수수료율"] / 100
-        df["순이익"] = df["매출"] - df["수수료"] - df["광고비"]
 
-        daily_summary = df.groupby("날짜").agg({
+        # 사이트별 날짜 기준 광고비 하나만 남기고 나머지는 0 처리
+        df["광고비"] = df.apply(lambda r: r["광고비"] if r["광고비"] > 0 else 0, axis=1)
+        df["수수료"] = df["매출"] * df["수수료율"] / 100
+        df_grouped = df.copy()
+
+        df_grouped["광고비"] = df_grouped.groupby(["날짜", "사이트"])["광고비"].transform("max")
+        df_grouped = df_grouped.drop_duplicates(subset=["날짜", "사이트", "상품"])
+
+        df_grouped["순이익"] = df_grouped["매출"] - df_grouped["수수료"] - df_grouped["광고비"]
+
+        daily_summary = df_grouped.groupby("날짜").agg({
             "매출": "sum",
             "광고비": "sum",
             "순이익": "sum"
