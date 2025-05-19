@@ -42,6 +42,14 @@ def init_sales_db():
             수수료율 REAL
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            사이트 TEXT,
+            상품 TEXT,
+            가격 INTEGER,
+            PRIMARY KEY (사이트, 상품)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -151,28 +159,33 @@ def admin_page():
         price = st.number_input("상품 가격", min_value=0, step=10)
         if st.button("상품 가격 저장"):
             if site and product:
-                if site not in st.session_state.product_prices:
-                    st.session_state.product_prices[site] = {}
-                st.session_state.product_prices[site][product] = price
+                conn = sqlite3.connect(SALES_DB_PATH)
+                conn.execute("REPLACE INTO products (사이트, 상품, 가격) VALUES (?, ?, ?)", (site, product, price))
+                conn.commit(); conn.close()
                 st.success("상품 가격이 저장되었습니다.")
 
         st.divider()
         st.subheader("상품 목록 관리")
-        for s in st.session_state.product_prices:
-            for p in st.session_state.product_prices[s]:
-                col1, col2, col3 = st.columns([4, 2, 2])
-                with col1:
-                    st.markdown(f"**{s} / {p}** - {st.session_state.product_prices[s][p]}원")
-                with col2:
-                    new_price = st.number_input(f"가격 수정 ({s}-{p})", value=st.session_state.product_prices[s][p], key=f"{s}_{p}_price")
-                    if st.button("수정", key=f"{s}_{p}_update"):
-                        st.session_state.product_prices[s][p] = new_price
-                        st.success(f"{p} 가격이 수정되었습니다.")
-                with col3:
-                    if st.button("삭제", key=f"{s}_{p}_delete"):
-                        del st.session_state.product_prices[s][p]
-                        st.success(f"{p} 삭제됨")
-                        st.rerun()
+        conn = sqlite3.connect(SALES_DB_PATH)
+        product_df = pd.read_sql_query("SELECT * FROM products", conn)
+        conn.close()
+        for idx, row in product_df.iterrows():
+            col1, col2, col3 = st.columns([4, 2, 2])
+            with col1:
+                st.markdown(f"**{row['사이트']} / {row['상품']}** - {row['가격']}원")
+            with col2:
+                new_price = st.number_input(f"가격 수정 ({row['사이트']}-{row['상품']})", value=row['가격'], key=f"edit_{row['사이트']}_{row['상품']}")
+                if st.button("수정", key=f"update_{row['사이트']}_{row['상품']}"):
+                    conn = sqlite3.connect(SALES_DB_PATH)
+                    conn.execute("UPDATE products SET 가격=? WHERE 사이트=? AND 상품=?", (new_price, row['사이트'], row['상품']))
+                    conn.commit(); conn.close()
+                    st.success("수정 완료"); st.rerun()
+            with col3:
+                if st.button("삭제", key=f"delete_{row['사이트']}_{row['상품']}"):
+                    conn = sqlite3.connect(SALES_DB_PATH)
+                    conn.execute("DELETE FROM products WHERE 사이트=? AND 상품=?", (row['사이트'], row['상품']))
+                    conn.commit(); conn.close()
+                    st.success("삭제 완료"); st.rerun()
 
     with tab2:
         st.subheader("사이트별 수수료율 설정")
@@ -208,16 +221,21 @@ def admin_page():
                     st.success("삭제 완료"); st.rerun()
 
 
-# ── 매출 입력 및 분석 페이지 ─────────────────────────────────────
+# ── 매출 입력 및 분석 페이지 수정: DB에서 가격 불러오기 ───────
 def main_page():
     st.title(f"📈 매출 자동화 시스템 - {st.session_state.nickname}님")
 
     today = date.today().isoformat()
 
-    if st.session_state.product_prices:
+    conn = sqlite3.connect(SALES_DB_PATH)
+    product_df = pd.read_sql_query("SELECT * FROM products", conn)
+    conn.close()
+
+    if not product_df.empty:
         st.subheader("판매 내역 입력")
-        selected_site = st.selectbox("사이트 선택", list(st.session_state.product_prices.keys()))
-        selected_product = st.selectbox("상품 선택", list(st.session_state.product_prices[selected_site].keys()))
+        selected_site = st.selectbox("사이트 선택", product_df["사이트"].unique())
+        filtered_products = product_df[product_df["사이트"] == selected_site]
+        selected_product = st.selectbox("상품 선택", filtered_products["상품"].tolist())
         quantity = st.number_input("판매 수량", min_value=0, step=1)
         ad_cost = st.number_input("해당 날짜의 광고비", min_value=0, step=100)
 
@@ -232,13 +250,14 @@ def main_page():
     conn = sqlite3.connect(SALES_DB_PATH)
     df = pd.read_sql_query("SELECT * FROM sales", conn)
     fee_df = pd.read_sql_query("SELECT * FROM fees", conn)
+    prod_df = pd.read_sql_query("SELECT * FROM products", conn)
     conn.close()
 
     if not df.empty:
-        df["단가"] = df.apply(lambda row: st.session_state.product_prices.get(row["사이트"], {}).get(row["상품"], 0), axis=1)
-        df = pd.merge(df, fee_df, on="사이트", how="left")
+        df = df.merge(prod_df, on=["사이트", "상품"], how="left")
+        df = df.merge(fee_df, on="사이트", how="left")
         df["수수료율"] = df["수수료율"].fillna(0)
-        df["매출"] = df["단가"] * df["수량"]
+        df["매출"] = df["가격"] * df["수량"]
         df["수수료"] = df["매출"] * df["수수료율"] / 100
         df["순이익"] = df["매출"] - df["수수료"] - df["광고비"]
 
