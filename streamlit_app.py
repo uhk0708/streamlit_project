@@ -50,6 +50,16 @@ def init_sales_db():
             PRIMARY KEY (사이트, 상품)
         )
     """)
+    # <<< 수정된 부분 [1] >>>
+    # adcost 테이블 생성 코드를 admin_page가 아닌 초기화 함수로 이동
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS adcost (
+            날짜 TEXT,
+            사이트 TEXT,
+            광고비 INTEGER,
+            PRIMARY KEY (날짜, 사이트)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -230,31 +240,26 @@ def admin_page():
                     st.success("삭제 완료"); st.rerun()
     with tab3:
         st.subheader("📆 날짜별 사이트 광고비 관리")
-        from datetime import datetime
-        conn = sqlite3.connect(SALES_DB_PATH)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS adcost (
-                날짜 TEXT,
-                사이트 TEXT,
-                광고비 INTEGER,
-                PRIMARY KEY (날짜, 사이트)
-            )
-        """)
-        conn.commit()
-    
+        
+        # <<< 수정된 부분 [2] >>>
+        # 테이블 생성 코드가 init_sales_db()로 이동했으므로 이 부분은 삭제합니다.
+        
         ad_date = st.date_input("광고비 적용 날짜", value=date.today())
         ad_site = st.text_input("사이트명", key="ad_site")
         ad_value = st.number_input("광고비 (원)", min_value=0, step=100)
     
         if st.button("광고비 저장"):
+            conn = sqlite3.connect(SALES_DB_PATH)
             conn.execute(
                 "REPLACE INTO adcost (날짜, 사이트, 광고비) VALUES (?, ?, ?)",
                 (ad_date.isoformat(), ad_site, ad_value)
             )
             conn.commit()
+            conn.close()
             st.success("광고비 저장 완료")
     
         st.divider()
+        conn = sqlite3.connect(SALES_DB_PATH)
         ad_df = pd.read_sql_query("SELECT * FROM adcost ORDER BY 날짜 DESC, 사이트", conn)
         conn.close()
     
@@ -356,20 +361,33 @@ def main_page():
         df["수수료율"] = df["수수료율"].fillna(0)
 
         # 광고비 병합 시 KeyError 방지
+        # sales 테이블의 광고비 컬럼과 adcost 테이블의 광고비 컬럼 이름이 중복되어
+        # merge 시 _x, _y가 붙는 문제를 해결하기 위해 컬럼 이름을 명확히 합니다.
+        ad_df = ad_df.rename(columns={'광고비': '일일광고비'})
         df = df.merge(ad_df, on=["날짜", "사이트"], how="left")
-        if "광고비" not in df.columns:
-            df["광고비"] = 0
-        else:
-            df["광고비"] = df["광고비"].fillna(0)
-
+        df['일일광고비'] = df['일일광고비'].fillna(0)
+        
+        # sales 테이블의 광고비는 이제 사용하지 않으므로 삭제하거나 무시할 수 있습니다.
+        # 여기서는 일일 광고비로 비용을 계산합니다.
+        
         df["매출"] = df["가격"] * df["수량"]
         df["수수료"] = df["매출"] * df["수수료율"] / 100
 
-        df_grouped = df.groupby("날짜").agg({
-            "매출": "sum",
-            "광고비": "sum",
-            "수수료": "sum"
+        # 날짜와 사이트별로 그룹화하여 일일 광고비가 중복 계산되지 않도록 처리
+        daily_costs = df.groupby(['날짜', '사이트']).agg({
+            '매출': 'sum',
+            '수수료': 'sum',
+            '일일광고비': 'first' # 날짜와 사이트가 같다면 일일광고비는 동일
         }).reset_index()
+
+        # 날짜별로 최종 집계
+        df_grouped = daily_costs.groupby("날짜").agg({
+            "매출": "sum",
+            "수수료": "sum",
+            "일일광고비": "sum" # 사이트별로 다른 광고비를 합산
+        }).reset_index()
+
+        df_grouped.rename(columns={'일일광고비': '광고비'}, inplace=True)
         df_grouped["순이익"] = df_grouped["매출"] - df_grouped["수수료"] - df_grouped["광고비"]
 
         st.dataframe(df_grouped)
